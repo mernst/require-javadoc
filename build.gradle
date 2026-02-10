@@ -3,14 +3,14 @@ plugins {
   id("application")
 
   // To create a fat jar build/libs/...-all.jar, run: ./gradlew shadowJar
-  id("com.gradleup.shadow").version("9.3.0")
+  id("com.gradleup.shadow").version("9.3.1")
 
   // Code formatting; defines targets "spotlessApply" and "spotlessCheck"
   // Version 8.0.0 and later requires Java 17+.
-  id("com.diffplug.spotless").version("8.1.0")
+  id("com.diffplug.spotless").version("8.2.1")
 
   // Error Prone linter
-  id("net.ltgt.errorprone").version("4.3.0") apply false
+  id("net.ltgt.errorprone").version("5.0.0") apply false
 
   // PMD linter
   id("pmd")
@@ -19,10 +19,10 @@ plugins {
   id("jacoco")
 
   // Checker Framework pluggable type-checking
-  id("org.checkerframework").version("0.6.61")
+  id("org.checkerframework").version("1.0.2")
 
   // Publishing to Maven Central.
-  id("com.vanniktech.maven.publish").version("0.35.0")
+  id("com.vanniktech.maven.publish").version("0.36.0")
 }
 
 repositories {
@@ -33,13 +33,13 @@ repositories {
 }
 
 ext {
-  errorproneVersion = "2.45.0"
+  errorproneVersion = "2.47.0"
   isJava17orHigher = JavaVersion.current() >= JavaVersion.VERSION_17
   isJava21orHigher = JavaVersion.current() >= JavaVersion.VERSION_21
 }
 
 dependencies {
-  implementation("com.github.javaparser:javaparser-core:3.27.1")
+  implementation("com.github.javaparser:javaparser-core:3.28.0")
   implementation("org.plumelib:javac-parse:0.9.0")
   implementation("org.plumelib:options:2.0.3")
 }
@@ -103,14 +103,11 @@ tasks.withType(JavaCompile).configureEach {
   options.forkOptions.jvmArgs += "-Xmx6g"
   options.compilerArgs << "-Werror"
   // "-processing" avoids javac warning "No processor claimed any of these annotations".
-  // "-options" is because of JDK 21 warning "source value 8 is obsolete..."
   if (isJava21orHigher) {
-    options.compilerArgs << "-Xlint:all,-processing,-options,-this-escape"
+    options.compilerArgs << "-Xlint:all,-processing,-this-escape"
   } else {
-    options.compilerArgs << "-Xlint:all,-processing,-options"
+    options.compilerArgs << "-Xlint:all,-processing"
   }
-  // // Only needed when debugging.
-  // options.compilerArgs << "-g"
 }
 if (isJava21orHigher) {
   apply plugin: "net.ltgt.errorprone"
@@ -136,7 +133,7 @@ if (isJava21orHigher) {
 // PMD linter
 
 pmd {
-  toolVersion = "7.19.0"
+  toolVersion = "7.21.0"
   ruleSetFiles = files("${rootDir}/.pmd-ruleset.xml")
   consoleOutput = true
   ignoreFailures = false
@@ -150,6 +147,7 @@ pmdTest.enabled = false
 apply plugin: "org.checkerframework"
 
 checkerFramework {
+  version = libs.checker.get().version
   checkers = [
     // No need to run CalledMethodsChecker, because ResourceLeakChecker does so.
     // "org.checkerframework.checker.calledmethods.CalledMethodsChecker",
@@ -166,8 +164,7 @@ checkerFramework {
     "org.checkerframework.common.initializedfields.InitializedFieldsChecker",
   ]
   extraJavacArgs = [
-    // No "-Werror" because of JDK 21 warning "source value 8 is obsolete..."
-    // "-Werror",
+    "-Werror",
     // "-Aversion",
     // "-verbose",
     "-AcheckPurityAnnotations",
@@ -176,36 +173,16 @@ checkerFramework {
     "-AwarnUnneededSuppressions",
   ]
 }
-// To use a snapshot version of the Checker Framework.
-if (false) {
-  // If the above is true, change it to false after CF is released.
-  ext.checkerFrameworkVersion = "3.52.1"
-  dependencies {
-    compileOnly("org.checkerframework:checker-qual:${checkerFrameworkVersion}")
-    testCompileOnly("org.checkerframework:checker-qual:${checkerFrameworkVersion}")
-    checkerFramework("org.checkerframework:checker:${checkerFrameworkVersion}")
-  }
-  configurations.all {
-    resolutionStrategy.cacheChangingModulesFor(0, "minutes")
-  }
-}
-// To use a locally-built Checker Framework, run gradle with "-PcfLocal".
-if (project.hasProperty("cfLocal")) {
-  def cfHome = String.valueOf(System.getenv("CHECKERFRAMEWORK"))
-  dependencies {
-    compileOnly(files(cfHome + "/checker/dist/checker-qual.jar"))
-    testCompileOnly(files(cfHome + "/checker/dist/checker-qual.jar"))
-    checkerFramework(files(cfHome + "/checker/dist/checker.jar"))
-  }
-}
+
 
 // Javadoc
 
-// Turn Javadoc warnings into errors.
+tasks.withType(Javadoc) {
+  options.noTimestamp = true
+}
 javadoc {
-  // No "-Werror" because of JDK 21 warning "source value 8 is obsolete..."
-  // options.addStringOption("Xwerror", "-Xdoclint:all")
-  options.addStringOption("Xdoclint:all", "-quiet")
+  // Turn Javadoc warnings into errors.
+  options.addStringOption("Xwerror", "-Xdoclint:all")
   options.addStringOption("private", "-quiet")
   options.addStringOption("source", "11")
   doLast {
@@ -253,16 +230,17 @@ configurations {
 dependencies {
   requireJavadoc("org.plumelib:require-javadoc:2.0.0")
 }
-tasks.register("requireJavadoc", JavaExec) {
+def requireJavadoc = tasks.register("requireJavadoc", JavaExec) {
   // "dependsOn(jar)" because this is the requireJavadoc project itself,
   // and Gradle uses the built-from-source version of
   // "org.plumelib:require-javadoc".  So declare a dependency on it.
   dependsOn(jar)
   group = "Documentation"
   description = "Ensures that Javadoc documentation exists."
+  inputs.files(sourceSets.main.allJava)
   mainClass = "org.plumelib.javadoc.RequireJavadoc"
   classpath = configurations.requireJavadoc
-  args("src/main/java")
+  args(sourceSets.main.allJava.srcDirs.collect{it.getAbsolutePath()})
   jvmArgs += [
     "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
     "--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED",
